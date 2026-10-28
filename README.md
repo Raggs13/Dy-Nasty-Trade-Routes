@@ -28,6 +28,28 @@ Repo → **Actions** tab → enable workflows if asked → **MFL trades to Disco
 
 The first run only records existing trades, so your channel doesn't get flooded with old ones. After that, each new trade is posted within about 10–15 minutes.
 
+## Posting trade history (one-time)
+
+`mfl_history.py` posts every trade from the 2023–2026 seasons to a separate channel. For each draft pick in a trade, it also shows who was drafted with it, for example:
+
+> • 2025 Round 1 pick (Gridiron Gurus's) → 1.05 **Ashton Jeanty (RB, LV)**
+
+Setup:
+1. In Discord, create a webhook in your history channel (same steps as above).
+2. Add it as a repository secret named `DISCORD_HISTORY_WEBHOOK_URL`.
+3. Upload `mfl_history.py` to the top level of the repo, and create `.github/workflows/mfl-history.yml` the same way as the other workflow file.
+4. Go to **Actions → Post trade history to Discord → Run workflow**.
+   - Tick **Preview only** first to see the messages in the run's log without posting anything.
+   - Then run it again with the box unticked to post for real.
+
+Posting takes about 2–3 seconds per trade, so a few hundred trades take 10–15 minutes. The workflow saves its progress in `history_state.json`, so if a run is interrupted, running it again picks up where it left off without double-posting.
+
+What the pick results mean:
+- **→ 1.05 Player Name**: the pick and who was taken with it.
+- **→ not drafted yet**: a pick for a draft that hasn't happened (2027 and later).
+- **→ one of: …**: the script couldn't tell which of a team's picks in that round this was; it lists the possibilities.
+- **→ draft result not found**: MFL has no draft results for that year (e.g. a draft done offline).
+
 ## If the run fails with an MFL error (private league)
 Some leagues hide transactions from non-members. If that's the case:
 1. Log in to MFL and find your API key on the league's developer API page (under the league's **Help** menu, look for the developers/API section).
