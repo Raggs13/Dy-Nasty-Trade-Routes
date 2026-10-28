@@ -1,0 +1,55 @@
+name: Post trade history to Discord
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Preview only (show messages in the log, don't post)"
+        type: boolean
+        default: false
+      first_year:
+        description: "First season"
+        default: "2023"
+      last_year:
+        description: "Last season"
+        default: "2026"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mfl-trades        # same group as the live bot, so they never run at once
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Post past trades
+        env:
+          DISCORD_HISTORY_WEBHOOK_URL: ${{ secrets.DISCORD_HISTORY_WEBHOOK_URL }}
+          MFL_APIKEY: ${{ secrets.MFL_APIKEY }}
+          MFL_LEAGUE_ID: "24958"
+          HISTORY_FIRST_YEAR: ${{ inputs.first_year }}
+          HISTORY_LAST_YEAR: ${{ inputs.last_year }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python mfl_history.py
+
+      - name: Save progress (so a re-run never double-posts)
+        if: always()
+        run: |
+          if [ -f history_state.json ] && [ -n "$(git status --porcelain history_state.json)" ]; then
+            git config user.name "trade-bot"
+            git config user.email "trade-bot@users.noreply.github.com"
+            git add history_state.json
+            git commit -m "Update posted trade history"
+            git pull --rebase
+            git push
+          fi
