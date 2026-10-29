@@ -38,5 +38,6 @@ jobs:
             git config user.email "trade-bot@users.noreply.github.com"
             git add state.json
             git commit -m "Update posted trades"
+            git pull --rebase
             git push
           fi
