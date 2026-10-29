@@ -40,7 +40,8 @@ jobs:
           MFL_HOST: "www44.myfantasyleague.com"
           # League settings: leave blank to read them from MFL
           PLAYOFF_TEAMS: ""          # e.g. "6"
-          LAST_REGULAR_WEEK: ""      # e.g. "14"
+          LAST_REGULAR_WEEK: "14"    # last week of the regular season
+          SEASON_GAMES: "14"         # regular-season games per team
           DIVISION_WINNERS_IN: "false"   # "true" if division winners get automatic spots
           DRY_RUN: ${{ inputs.dry_run }}
           FORCE: ${{ inputs.force }}
