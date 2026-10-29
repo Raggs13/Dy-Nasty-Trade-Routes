@@ -2,7 +2,7 @@ name: Trade block to Discord
 
 on:
   schedule:
-    - cron: "5-59/10 * * * *"   # every 10 minutes, offset from the trade bot
+    - cron: "5,15,25,35,45,55 * * * *"   # every 10 minutes, offset from the trade bot
   workflow_dispatch:
     inputs:
       post_all:
