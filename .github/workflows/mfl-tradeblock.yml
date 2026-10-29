@@ -1,0 +1,54 @@
+name: Trade block to Discord
+
+on:
+  schedule:
+    - cron: "5-59/10 * * * *"   # every 10 minutes, offset from the trade bot
+  workflow_dispatch:
+    inputs:
+      post_all:
+        description: "Post the full current trade block now"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Preview only (show messages in the log, don't post)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mfl-tradeblock
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the trade block
+        env:
+          DISCORD_TRADEBLOCK_WEBHOOK_URL: ${{ secrets.DISCORD_TRADEBLOCK_WEBHOOK_URL }}
+          MFL_APIKEY: ${{ secrets.MFL_APIKEY }}
+          MFL_LEAGUE_ID: "24958"
+          MFL_YEAR: "2026"
+          MFL_HOST: "www44.myfantasyleague.com"
+          POST_ALL: ${{ inputs.post_all }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python mfl_tradeblock.py
+
+      - name: Remember the trade block
+        run: |
+          if [ -f tradeblock_state.json ] && [ -n "$(git status --porcelain tradeblock_state.json)" ]; then
+            git config user.name "trade-bot"
+            git config user.email "trade-bot@users.noreply.github.com"
+            git add tradeblock_state.json
+            git commit -m "Update trade block"
+            git pull --rebase
+            git push
+          fi
