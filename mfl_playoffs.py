@@ -36,6 +36,7 @@ TRUTHY = ("1", "true", "yes")
 DRY_RUN = (os.environ.get("DRY_RUN") or "").lower() in TRUTHY
 FORCE = (os.environ.get("FORCE") or "").lower() in TRUTHY
 DIV_IN = (os.environ.get("DIVISION_WINNERS_IN") or "").lower() in TRUTHY
+SEASON_GAMES = int(os.environ.get("SEASON_GAMES") or 0)  # regular-season games per team
 SIMS = 10000
 UA = "DyNastyTradeBot/1.0 (+https://github.com)"
 
@@ -173,7 +174,11 @@ def playoff_set(ws, pfs, teams, n, div_in):
     return chosen
 
 
-def simulate(teams, rec, remaining, n, div_in, next_week):
+def simulate(teams, rec, remaining, n, div_in, next_week, extra=None):
+    """extra = {team: number of games left that MFL's schedule doesn't list};
+    those are simulated against a randomly chosen opponent."""
+    extra = {t: k for t, k in (extra or {}).items() if k > 0}
+    team_ids = list(teams)
     all_scores = [s for r in rec.values() for s in r["scores"]]
     lg_mean = sum(all_scores) / len(all_scores) if all_scores else 100.0
     lg_sd = (math.sqrt(sum((s - lg_mean) ** 2 for s in all_scores) / (len(all_scores) - 1))
@@ -203,6 +208,12 @@ def simulate(teams, rec, remaining, n, div_in, next_week):
             if g["week"] == next_week:
                 nw[g["a"]] = win == g["a"]
                 nw[g["b"]] = win == g["b"]
+        for t, k in extra.items():
+            for _ in range(k):
+                opp = rng.choice([o for o in team_ids if o != t])
+                st = rng.gauss(mean[t], lg_sd)
+                pfs[t] += st
+                ws[t] += st > rng.gauss(mean[opp], lg_sd)
         ins = playoff_set(ws, pfs, teams, n, div_in)
         for t in ins:
             made[t] += 1
@@ -228,11 +239,23 @@ def simulate(teams, rec, remaining, n, div_in, next_week):
     return odds, best
 
 
-def clinch_status(teams, rec, remaining, n, div_in):
-    left = {t: 0 for t in teams}
+def games_left(teams, rec, remaining, season_games):
+    """Games each team has left: the larger of what MFL's schedule lists and
+    (season length - games played), so a schedule missing future weeks can
+    never make a team look clinched or eliminated too early."""
+    sched = {t: 0 for t in teams}
     for g in remaining:
-        left[g["a"]] += 1
-        left[g["b"]] += 1
+        sched[g["a"]] += 1
+        sched[g["b"]] += 1
+    left = {}
+    for t in teams:
+        played = rec[t]["w"] + rec[t]["l"] + rec[t]["t"]
+        by_count = max(0, season_games - int(played)) if season_games else 0
+        left[t] = max(sched[t], by_count)
+    return left, sched
+
+
+def clinch_status(teams, rec, left, n, div_in):
     cur = {t: wins(rec[t]) for t in teams}
     mx = {t: cur[t] + left[t] for t in teams}
     n_divs = len({teams[t]["div"] for t in teams if teams[t]["div"]})
@@ -250,7 +273,7 @@ def clinch_status(teams, rec, remaining, n, div_in):
             status[t] = "eliminated"
         else:
             status[t] = None
-    return status, left, cur, mx
+    return status, cur, mx
 
 
 # ---------- message ----------
@@ -264,13 +287,12 @@ def short(name, width):
     return name if len(name) <= width else name[:width - 1] + "…"
 
 
-def build_message(teams, rec, remaining, n, div_in, week, odds, best, status, left, cur, mx):
+def build_message(teams, rec, weeks_left, n, div_in, week, odds, best, status, cur, mx):
     order = sorted(teams, key=lambda t: rank_key(cur[t], rec[t]["pf"]))
     in_now = playoff_set(cur, {t: rec[t]["pf"] for t in teams}, teams, n, div_in)
     seeded = [t for t in order if t in in_now] + [t for t in order if t not in in_now]
     first_out = next((t for t in seeded if t not in in_now), None)
     last_in = [t for t in seeded if t in in_now][-1] if in_now else None
-    weeks_left = len({g["week"] for g in remaining})
 
     w = max(10, min(18, max(len(teams[t]["name"]) for t in teams)))
     lines = [f"{'#':>2}  {'Team':<{w}}  {'W-L':<6}{'PF':>7}  {'Odds':>4}  Note"]
@@ -377,20 +399,32 @@ def main():
     if state.get("last_posted") == key and not FORCE:
         print(f"Week {week} already posted.")
         return
-    if not remaining and state.get("final_posted") == YEAR and not FORCE:
+    rec = build_records(teams, played)
+    season_games = SEASON_GAMES or last_week or 0
+    left, sched = games_left(teams, rec, remaining, season_games)
+    print(f"Season length: {season_games or 'unknown'} games · last completed week: {week} · "
+          f"MFL schedule lists {len(remaining)} games still to play")
+    for t in teams:
+        r = rec[t]
+        print(f"  {teams[t]['name']}: {fmt_rec(r)}, {left[t]} games left"
+              + (f" (schedule only lists {sched[t]})" if sched[t] != left[t] else ""))
+    if not season_games:
+        print("  ! Season length unknown. Set LAST_REGULAR_WEEK in the workflow file.")
+
+    weeks_left = max(left.values(), default=0)
+    if not weeks_left and state.get("final_posted") == YEAR and not FORCE:
         print("Regular season is over and final standings were already posted.")
         return
-
-    rec = build_records(teams, played)
     next_week = min((g["week"] for g in remaining), default=None)
-    odds, best = simulate(teams, rec, remaining, n, div_in, next_week)
-    status, left, cur, mx = clinch_status(teams, rec, remaining, n, div_in)
-    post_discord(build_message(teams, rec, remaining, n, div_in, week,
-                               odds, best, status, left, cur, mx))
+    extra = {t: left[t] - sched[t] for t in teams}
+    odds, best = simulate(teams, rec, remaining, n, div_in, next_week, extra)
+    status, cur, mx = clinch_status(teams, rec, left, n, div_in)
+    post_discord(build_message(teams, rec, weeks_left, n, div_in, week,
+                               odds, best, status, cur, mx))
 
     if not DRY_RUN:
         state["last_posted"] = key
-        if not remaining:
+        if not weeks_left:
             state["final_posted"] = YEAR
         with open(STATE_FILE, "w") as f:
             json.dump(state, f, indent=2)
