@@ -1,0 +1,57 @@
+name: Recap and power rankings (manual)
+
+# Automatic posting happens inside "MFL trades to Discord" every Tuesday at 10 AM Eastern.
+# Run this by hand to preview a week (nothing posted) or to post right now.
+on:
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "Week to show (blank = latest finished week)"
+        default: ""
+      dry_run:
+        description: "Preview only (show in the log, don't post)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mfl-trades        # shares a queue with the trade bot so they never overlap
+  cancel-in-progress: false
+
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Recap and power rankings
+        env:
+          DISCORD_RECAP_WEBHOOK_URL: ${{ secrets.DISCORD_RECAP_WEBHOOK_URL }}
+          DISCORD_POWER_WEBHOOK_URL: ${{ secrets.DISCORD_POWER_WEBHOOK_URL }}
+          MFL_APIKEY: ${{ secrets.MFL_APIKEY }}
+          MFL_LEAGUE_ID: "24958"
+          MFL_YEAR: "2026"
+          MFL_HOST: "www44.myfantasyleague.com"
+          LAST_REGULAR_WEEK: "14"
+          WEEK: ${{ inputs.week }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          FORCE: "true"
+        run: python mfl_weekly.py
+
+      - name: Save what was posted
+        if: ${{ !inputs.dry_run && inputs.week == '' }}
+        run: |
+          if [ -f weekly_state.json ] && [ -n "$(git status --porcelain weekly_state.json)" ]; then
+            git config user.name "trade-bot"
+            git config user.email "trade-bot@users.noreply.github.com"
+            git add weekly_state.json
+            git commit -m "Weekly recap posted"
+            git pull --rebase
+            git push
+          fi
