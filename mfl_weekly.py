@@ -55,23 +55,27 @@ def num(x, default=0.0):
 
 
 def mfl(type_, required=True, **params):
+    """Fetch from MFL, pausing between calls and retrying if MFL pushes back."""
     q = {"TYPE": type_, "L": LEAGUE_ID, "JSON": "1", **params}
     if APIKEY:
         q["APIKEY"] = APIKEY
     url = f"https://{HOST}/{YEAR}/export?" + urllib.parse.urlencode(q)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            data = json.loads(r.read().decode("utf-8"))
-    except Exception:
-        if required:
-            raise
-        return {}
-    if "error" in data:
-        if required:
-            raise RuntimeError(f"MFL error for {type_}: {data['error']}")
-        return {}
-    return data
+    problem = None
+    for attempt in range(4):
+        time.sleep(1 if attempt == 0 else 4 * attempt)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            if "error" not in data:
+                return data
+            problem = data["error"]
+        except Exception as e:
+            problem = e
+    print(f"  ! MFL {type_} {params or ''} failed after retries: {problem}")
+    if required:
+        raise RuntimeError(f"MFL error for {type_}: {problem}")
+    return {}
 
 
 # ---------- the Tuesday timer ----------
@@ -110,19 +114,43 @@ def read_week(w):
         games.append(tuple(teams))
     if not games:
         return None
-    done = (all(t["result"] in ("W", "L", "T") for g in games for t in g)
-            and any(t["score"] > 0 for g in games for t in g))
-    return games if done else None
+    missing = [t["id"] for g in games for t in g if t["result"] not in ("W", "L", "T")]
+    scored = any(t["score"] > 0 for g in games for t in g)
+    if missing or not scored:
+        if scored:  # only worth explaining for a week that has been played
+            print(f"  Week {w}: no final result yet for team(s) {', '.join(missing)}")
+        return None
+    return games
+
+
+def games_played():
+    """Most games any team has played, per MFL's official standings (0 if unknown)."""
+    st = as_list(mfl("leagueStandings", required=False).get("leagueStandings", {}).get("franchise"))
+    best = 0
+    for f in st:
+        if f.get("h2hw") is not None:
+            best = max(best, int(num(f.get("h2hw")) + num(f.get("h2hl")) + num(f.get("h2ht"))))
+    return best
 
 
 def read_season(upto=None):
     """{week: games} for every finished week (stops at the first unfinished one)."""
+    official = games_played()
+    if official:
+        print(f"MFL standings show {official} games played.")
     weeks = {}
     for w in range(1, 23):
         if upto and w > upto:
             break
         g = read_week(w)
+        if g is None and official and w <= official:
+            print(f"  Week {w} didn't look finished on the first try; asking MFL again.")
+            time.sleep(5)
+            g = read_week(w)
         if g is None:
+            if official and w <= official:
+                print(f"  ! Week {w} is finished per the standings, but MFL's week results "
+                      f"aren't complete yet; stopping at week {w - 1}.")
             break
         weeks[w] = g
     return weeks
@@ -293,7 +321,9 @@ def power_message(week, weeks, teams):
     now = power_table(weeks, week)
     before = {s["id"]: i for i, s in enumerate(power_table(weeks, week - 1), 1)} if week > 1 else {}
     w = max(10, min(18, max(len(teams.get(s["id"], s["id"])) for s in now)))
-    rows = [f"{'#':>2} {'':3} {'Team':<{w}}  {'W-L':<5} {'All-Play':<8} {'PPG':>6}  Note"]
+    aps = [f"{s['apw']:g}-{s['apl']:g}" for s in now]
+    apw = max(8, max(len(a) for a in aps))
+    rows = [f"{'#':>2} {'':3} {'Team':<{w}}  {'W-L':<5} {'All-Play':<{apw}} {'PPG':>6}  Note"]
     for i, s in enumerate(now, 1):
         prev = before.get(s["id"])
         move = "  —" if prev is None or prev == i else (f"▲{prev - i:<2}" if prev > i else f"▼{i - prev:<2}")
@@ -312,7 +342,7 @@ def power_message(week, weeks, teams):
             notes.append("hottest")
         name = teams.get(s["id"], s["id"])
         name = name if len(name) <= w else name[:w - 1] + "…"
-        rows.append(f"{i:>2} {move:3} {name:<{w}}  {rec:<5} {ap:<8} {s['ppg']:>6.1f}  {', '.join(notes)}")
+        rows.append(f"{i:>2} {move:3} {name:<{w}}  {rec:<5} {ap:<{apw}} {s['ppg']:>6.1f}  {', '.join(notes)}".rstrip())
     out = [f"📊 **Power Rankings — Week {week}**", "```", *rows, "```",
            "-# Ranked on all-play record (40%), points per game (30%), last 3 weeks (20%) "
            "and actual record (10%). All-Play = record if you played every team every week. "
