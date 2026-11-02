@@ -1,0 +1,30 @@
+name: Waivers preview
+
+# Automatic posting happens inside "MFL trades to Discord" every 10 minutes.
+# Run this by hand to preview recent adds, drops and waiver results in the log
+# (nothing is posted to Discord).
+on:
+  workflow_dispatch:
+    inputs:
+      recent:
+        description: "How many recent moves to preview"
+        default: "15"
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Preview recent moves
+        env:
+          MFL_APIKEY: ${{ secrets.MFL_APIKEY }}
+          MFL_LEAGUE_ID: "24958"
+          MFL_YEAR: "2026"
+          MFL_HOST: "www44.myfantasyleague.com"
+          PREVIEW_RECENT: ${{ inputs.recent }}
+        run: python mfl_waivers.py
