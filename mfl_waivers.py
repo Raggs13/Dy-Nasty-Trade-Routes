@@ -138,7 +138,9 @@ def waiver_message(wins, losers, teams, faab, players):
         for p in m["adds"]:
             lost_by_player.setdefault(p, []).append(m)
     has_bids = any(m["bid"] is not None for m in wins)
-    lines = ["💰 **Waiver Results**" if has_bids else "📝 **Waiver Results**"]
+    run_ts = min(m["ts"] for m in wins) if wins else 0
+    when = f" — <t:{run_ts}:D>" if run_ts else ""
+    lines = [("💰" if has_bids else "📝") + f" **Waiver Results**{when}"]
     for m in sorted(wins, key=lambda m: (-(m["bid"] or 0), teams.get(m["fid"], ""))):
         team = teams.get(m["fid"], m["fid"])
         bid = f" for **${m['bid']}**" if m["bid"] is not None else ""
@@ -181,14 +183,28 @@ def build_posts(moves, teams, faab, players):
     won = {(m["fid"], p) for m in wins for p in m["adds"]}
     losers = [m for m in moves if is_request(m) and m["adds"]
               and not any((m["fid"], p) in won for p in m["adds"])]  # skip winners' own bids
-    timeline = [(m["ts"], "fa", m) for m in fa]
-    if wins or losers:
-        timeline.append((min(m["ts"] for m in wins + losers), "waivers", None))
-    for _, kind, m in sorted(timeline, key=lambda x: x[0]):
-        if kind == "fa":
-            posts.append(fa_message(m, teams, players))
+    # Split waiver results into separate runs (results more than 30 minutes apart)
+    runs = []
+    for m in sorted(wins, key=lambda m: m["ts"]):
+        if runs and m["ts"] - runs[-1][-1]["ts"] <= 1800:
+            runs[-1].append(m)
         else:
-            posts += chunk_lines(waiver_message(wins, losers, teams, faab, players))
+            runs.append([m])
+    run_losers = [[] for _ in runs]
+    for lm in losers:
+        i = next((i for i, r in enumerate(runs) if r[-1]["ts"] >= lm["ts"]), len(runs) - 1)
+        if runs:
+            run_losers[i].append(lm)
+
+    timeline = [(m["ts"], "fa", m) for m in fa]
+    timeline += [(r[0]["ts"], "run", i) for i, r in enumerate(runs)]
+    for _, kind, x in sorted(timeline, key=lambda t: t[0]):
+        if kind == "fa":
+            posts.append(fa_message(x, teams, players))
+        else:
+            latest = x == len(runs) - 1  # FAAB balances are current, so only show on the latest run
+            posts += chunk_lines(waiver_message(runs[x], run_losers[x], teams,
+                                                faab if latest else {}, players))
     return posts
 
 
