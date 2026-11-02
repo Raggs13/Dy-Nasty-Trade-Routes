@@ -58,10 +58,28 @@ jobs:
             python mfl_waivers.py
           fi
 
-      - name: Save which trades, trade block changes and moves were posted
+      - name: Tuesday recap and power rankings
+        if: always()
+        continue-on-error: true   # a problem here never stops trade posts
+        env:
+          DISCORD_RECAP_WEBHOOK_URL: ${{ secrets.DISCORD_RECAP_WEBHOOK_URL }}
+          DISCORD_POWER_WEBHOOK_URL: ${{ secrets.DISCORD_POWER_WEBHOOK_URL }}
+          MFL_APIKEY: ${{ secrets.MFL_APIKEY }}
+          MFL_LEAGUE_ID: "24958"
+          MFL_YEAR: "2026"
+          MFL_HOST: "www44.myfantasyleague.com"
+          LAST_REGULAR_WEEK: "14"
+        run: |
+          if [ -z "$DISCORD_RECAP_WEBHOOK_URL" ] || [ ! -f mfl_weekly.py ]; then
+            echo "Weekly recap not set up yet; skipping."
+          else
+            python mfl_weekly.py
+          fi
+
+      - name: Save what was posted
         if: always()
         run: |
-          for f in state.json tradeblock_state.json waivers_state.json; do
+          for f in state.json tradeblock_state.json waivers_state.json weekly_state.json; do
             if [ -f "$f" ]; then git add "$f"; fi
           done
           if [ -n "$(git diff --cached --name-only)" ]; then
